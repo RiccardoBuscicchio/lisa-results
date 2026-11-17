@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Protected</title><meta name="robots" content="noindex,nofollow">
+<style>
+:root{--bg:#1d2024;--fg:#e6e7e9;--mu:#9aa0a8;--ln:#3a3f46;--ac:#6aa5ec}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-serif}
+#lock{display:flex;align-items:center;justify-content:center;height:100%}
+form{display:flex;gap:8px}input,button{font:inherit;padding:8px 12px;border-radius:6px;border:1px solid var(--ln);background:#25292e;color:var(--fg)}
+button{cursor:pointer}#err{color:#ff8a80;margin-top:10px;min-height:1.2em;text-align:center}
+#home{display:none;max-width:760px;margin:40px auto;padding:0 16px}.card{border:1px solid var(--ln);border-radius:8px;padding:14px 16px;margin:10px 0;cursor:pointer}
+.card:hover{border-color:var(--ac)}.mu{color:var(--mu)}#bar{display:none;padding:6px 12px;border-bottom:1px solid var(--ln)}
+iframe{display:none;border:0;width:100%;height:calc(100% - 42px)}
+</style></head><body>
+<div id="lock"><div><form id="f"><input id="pw" type="password" placeholder="Password" autocomplete="current-password" autofocus>
+<button>Open</button></form><div id="err"></div></div></div>
+<div id="bar"><button id="back">← back</button></div><div id="home"><div id="list"></div></div><iframe id="v"></iframe>
+<script>
+const $ = id => document.getElementById(id);
+let KEY = null; const cache = new Map();
+async function decrypt(url) {
+  const r = await fetch(url, {cache: "no-store"}); if (!r.ok) throw new Error("fetch " + url);
+  const b = new Uint8Array(await r.arrayBuffer());
+  return new Uint8Array(await crypto.subtle.decrypt({name: "AES-GCM", iv: b.slice(0, 12)}, KEY, b.slice(12)));
+}
+window.__img = async path => {
+  if (cache.has(path)) return cache.get(path);
+  const u = URL.createObjectURL(new Blob([await decrypt(path)], {type: "image/webp"}));
+  cache.set(path, u);
+  if (cache.size > 24) { const [k0, u0] = cache.entries().next().value; URL.revokeObjectURL(u0); cache.delete(k0); }
+  return u;
+};
+$("f").onsubmit = async e => {
+  e.preventDefault(); $("err").textContent = "…";
+  try {
+    const k = await (await fetch("kdf.json", {cache: "no-store"})).json();
+    const salt = Uint8Array.from(k.salt.match(/../g).map(h => parseInt(h, 16)));
+    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode($("pw").value), "PBKDF2", false, ["deriveKey"]);
+    KEY = await crypto.subtle.deriveKey({name: "PBKDF2", salt, iterations: k.iterations, hash: "SHA-256"}, base,
+                                        {name: "AES-GCM", length: 256}, false, ["decrypt"]);
+    const app = JSON.parse(new TextDecoder().decode(await decrypt("app.bin")));
+    $("lock").style.display = "none"; home(app);
+  } catch (err) { KEY = null; $("err").textContent = "Wrong password."; }
+};
+function home(app) {
+  document.title = app.title; $("home").style.display = "block"; $("bar").style.display = "none"; $("v").style.display = "none";
+  $("list").innerHTML = `<h2>${app.title}</h2>` + app.items.map(c =>
+    `<div class="card" data-n="${c.name}"><b>${c.desc}</b><div class="mu">${c.n} slides</div></div>`).join("");
+  document.querySelectorAll(".card").forEach(d => d.onclick = () => open_(d.dataset.n, app));
+  $("back").onclick = () => { $("v").srcdoc = ""; home(app); };
+}
+async function open_(name, app) {
+  $("list").innerHTML = "<p class='mu'>Decrypting…</p>";
+  window.__DATA = JSON.parse(new TextDecoder().decode(await decrypt(`${name}/slides.bin`)));
+  const html = new TextDecoder().decode(await decrypt(`${name}/viewer.bin`));
+  $("home").style.display = "none"; $("bar").style.display = "block";
+  const v = $("v"); v.style.display = "block"; v.srcdoc = html;
+}
+</script></body></html>
